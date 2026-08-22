@@ -19,8 +19,10 @@ pip install httpx && python3 probe.py
 #         no "found by kvaware router" lines for chat in `docker logs router`;
 #         prompt-form pair DOES kv-follow.
 
-# AFTER — the PR head (immutable sha; equals branch router-kvaware-chat-completions):
-export ROUTER_REF=3f498ff
+# AFTER — the PR head (immutable sha; equals branch router-kvaware-chat-completions).
+# The hardware e2e in the results doc ran at 3f498ff; 2574697 adds only the
+# two review fixes (executor for the /tokenize fallback, null text parts).
+export ROUTER_REF=2574697
 docker compose rm -sf router
 docker compose build router && docker compose up -d router
 # the recreated router's worker registry starts EMPTY - wait for both
