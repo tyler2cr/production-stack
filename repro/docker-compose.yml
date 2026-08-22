@@ -5,10 +5,13 @@
 # the LMCache controller advertises get_ip(), and the kvaware hash chain must
 # be identical on router and engines (same image, same PYTHONHASHSEED).
 #
-#   docker compose build && ROUTER_REF=<sha-or-branch> docker compose up -d
+#   export ROUTER_REF=<sha>   # required by EVERY compose command (the file
+#   docker compose build      # interpolates it), including `rm`/`ps`.
+#   docker compose up -d
 #
-# ROUTER_REF selects the router build: the PR branch (patched) or its
-# merge-base (unpatched baseline).
+# ROUTER_REF selects the router build: the PR head (patched) or its
+# merge-base (unpatched baseline) - exact shas in README.md.
+# Single-GPU rig: GPU1=0 GPU_MEM=0.4 puts both engines on device 0.
 x-engine: &engine
   build: {context: ., dockerfile: Dockerfile, target: base}
   image: local/kvaware-repro:base
@@ -47,7 +50,7 @@ services:
     container_name: engine1
     environment:
       <<: *engine-env
-      NVIDIA_VISIBLE_DEVICES: "1"
+      NVIDIA_VISIBLE_DEVICES: "${GPU1:-1}"
       LMCACHE_LMCACHE_INSTANCE_ID: "engine1"
       LMCACHE_LMCACHE_WORKER_PORTS: "8002"
     entrypoint: ["vllm", "serve"]
@@ -56,7 +59,7 @@ services:
               "--gpu-memory-utilization", "${GPU_MEM:-0.85}",
               "--kv-transfer-config",
               '{"kv_connector":"LMCacheConnectorV1","kv_role":"kv_both"}']
-    deploy: {resources: {reservations: {devices: [{driver: nvidia, device_ids: ["1"], capabilities: [gpu]}]}}}
+    deploy: {resources: {reservations: {devices: [{driver: nvidia, device_ids: ["${GPU1:-1}"], capabilities: [gpu]}]}}}
   router:
     build:
       context: .
@@ -77,6 +80,7 @@ services:
               "--static-models", "Qwen/Qwen2.5-1.5B-Instruct,Qwen/Qwen2.5-1.5B-Instruct",
               "--static-model-types", "chat,chat",
               "--routing-logic", "kvaware",
+              "--kv-aware-threshold", "2000",
               "--lmcache-controller-port", "9000",
               "--lmcache-controller-reply-port", "9001",
               "--lmcache-controller-heartbeat-port", "9002",
