@@ -1,0 +1,83 @@
+# Self-contained repro for the kvaware chat-tokenization patch.
+# One machine, any 2 CUDA GPUs (or one GPU: drop engine1 to a shared card by
+# setting both NVIDIA_VISIBLE_DEVICES=0 and GPU_MEM=0.4). Small ungated model
+# so the signature reproduces in minutes. All services on host networking -
+# the LMCache controller advertises get_ip(), and the kvaware hash chain must
+# be identical on router and engines (same image, same PYTHONHASHSEED).
+#
+#   docker compose build && ROUTER_REF=<sha-or-branch> docker compose up -d
+#
+# ROUTER_REF selects the router build: the PR branch (patched) or its
+# merge-base (unpatched baseline).
+x-engine: &engine
+  build: {context: ., dockerfile: Dockerfile, target: base}
+  image: local/kvaware-repro:base
+  network_mode: host
+  shm_size: 8gb
+  volumes: ["./hf-cache:/root/.cache/huggingface"]
+services:
+  engine0:
+    <<: *engine
+    container_name: engine0
+    environment: &engine-env
+      NVIDIA_VISIBLE_DEVICES: "0"
+      PYTHONHASHSEED: "0"
+      LMCACHE_USE_EXPERIMENTAL: "True"
+      LMCACHE_ENABLE_CONTROLLER: "True"
+      LMCACHE_LMCACHE_INSTANCE_ID: "engine0"
+      LMCACHE_CONTROLLER_PULL_URL: "127.0.0.1:9000"
+      LMCACHE_CONTROLLER_REPLY_URL: "127.0.0.1:9001"
+      LMCACHE_LMCACHE_WORKER_PORTS: "8001"
+      # 0.4.x workers default to NEVER heartbeating while the controller
+      # reaps silent workers after 30s - this must be set or every worker
+      # deregisters ~30s after registering.
+      LMCACHE_LMCACHE_WORKER_HEARTBEAT_TIME: "10"
+      LMCACHE_LOCAL_CPU: "True"
+      LMCACHE_MAX_LOCAL_CPU_SIZE: "10"
+      VLLM_RPC_TIMEOUT: "1000000"
+    entrypoint: ["vllm", "serve"]
+    command: ["Qwen/Qwen2.5-1.5B-Instruct", "--port", "8100",
+              "--max-model-len", "16384", "--enable-prefix-caching",
+              "--gpu-memory-utilization", "${GPU_MEM:-0.85}",
+              "--kv-transfer-config",
+              '{"kv_connector":"LMCacheConnectorV1","kv_role":"kv_both"}']
+    deploy: {resources: {reservations: {devices: [{driver: nvidia, device_ids: ["0"], capabilities: [gpu]}]}}}
+  engine1:
+    <<: *engine
+    container_name: engine1
+    environment:
+      <<: *engine-env
+      NVIDIA_VISIBLE_DEVICES: "1"
+      LMCACHE_LMCACHE_INSTANCE_ID: "engine1"
+      LMCACHE_LMCACHE_WORKER_PORTS: "8002"
+    entrypoint: ["vllm", "serve"]
+    command: ["Qwen/Qwen2.5-1.5B-Instruct", "--port", "8200",
+              "--max-model-len", "16384", "--enable-prefix-caching",
+              "--gpu-memory-utilization", "${GPU_MEM:-0.85}",
+              "--kv-transfer-config",
+              '{"kv_connector":"LMCacheConnectorV1","kv_role":"kv_both"}']
+    deploy: {resources: {reservations: {devices: [{driver: nvidia, device_ids: ["1"], capabilities: [gpu]}]}}}
+  router:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      # Same base as the engines ON PURPOSE: kvaware chunk hashes are rooted
+      # in vLLM's NONE_HASH + hash fn - a router without the same vllm
+      # derives a different chain and every lookup silently misses.
+      args: {ROUTER_REF: "${ROUTER_REF:?set ROUTER_REF to the PR branch or its merge-base sha}"}
+      target: router
+    container_name: router
+    network_mode: host
+    environment: {PYTHONHASHSEED: "0"}
+    depends_on: [engine0, engine1]
+    entrypoint: ["vllm-router"]
+    command: ["--host", "0.0.0.0", "--port", "30800",
+              "--service-discovery", "static",
+              "--static-backends", "http://127.0.0.1:8100,http://127.0.0.1:8200",
+              "--static-models", "Qwen/Qwen2.5-1.5B-Instruct,Qwen/Qwen2.5-1.5B-Instruct",
+              "--static-model-types", "chat,chat",
+              "--routing-logic", "kvaware",
+              "--lmcache-controller-port", "9000",
+              "--lmcache-controller-reply-port", "9001",
+              "--lmcache-controller-heartbeat-port", "9002",
+              "--static-backend-health-checks"]
