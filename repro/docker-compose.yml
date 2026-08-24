@@ -12,8 +12,10 @@
 # ROUTER_REF selects the router build: the PR head (patched) or its
 # merge-base (unpatched baseline) - exact shas in README.md.
 # Single-GPU rig: GPU1=0 GPU_MEM=0.4 puts both engines on device 0.
+# Only engine0 carries the build key: two services building the same
+# target+tag race in parallel and the second image export fails with
+# "already exists". engine1 reuses the image engine0 built.
 x-engine: &engine
-  build: {context: ., dockerfile: Dockerfile, target: base}
   image: local/kvaware-repro:base
   network_mode: host
   shm_size: 8gb
@@ -21,6 +23,7 @@ x-engine: &engine
 services:
   engine0:
     <<: *engine
+    build: {context: ., dockerfile: Dockerfile, target: base}
     container_name: engine0
     environment: &engine-env
       NVIDIA_VISIBLE_DEVICES: "0"
