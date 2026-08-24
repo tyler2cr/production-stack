@@ -21,11 +21,11 @@ python3 -m venv .venv && .venv/bin/pip install httpx   # bare pip/ensurepip may 
 #         prompt-form pair DOES kv-follow.
 
 # AFTER — the PR head (immutable sha; equals branch router-kvaware-chat-completions).
-# The hardware e2e in the results doc ran at 3f498ff; the commits after it
-# are review-hardening only (executors for blocking I/O, graceful fallback
-# on tokenize failure, single-flight tokenizer init, normalization tidying,
-# shared _ensure_tokenizer helper, negative-cached failed loads).
-export ROUTER_REF=d34db2c
+# e2e-validated at this head on BOTH tokenization paths: remote /tokenize
+# (2x H200, gemma-4-31B FP8, 2026-08-22) and local chat-template (1x H100,
+# this kit, 2026-08-24 - which caught and fixed a real bug: tokenize=True
+# returns Encoding objects on transformers 5.x).
+export ROUTER_REF=c0c4a42
 docker compose rm -sf router
 docker compose build router && docker compose up -d router
 # the recreated router's worker registry starts EMPTY - wait for both
