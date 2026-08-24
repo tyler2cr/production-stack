@@ -23,8 +23,8 @@ pip install httpx && python3 probe.py
 # The hardware e2e in the results doc ran at 3f498ff; the commits after it
 # are review-hardening only (executors for blocking I/O, graceful fallback
 # on tokenize failure, single-flight tokenizer init, normalization tidying,
-# shared _ensure_tokenizer helper).
-export ROUTER_REF=a7fd571
+# shared _ensure_tokenizer helper, negative-cached failed loads).
+export ROUTER_REF=d34db2c
 docker compose rm -sf router
 docker compose build router && docker compose up -d router
 # the recreated router's worker registry starts EMPTY - wait for both
