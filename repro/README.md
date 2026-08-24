@@ -7,6 +7,8 @@ ungated; total setup is minutes. `ROUTER_REF` must be exported for EVERY
 `rm`).
 
 ```bash
+export HOST_IP=$(hostname -I | awk '{print $1}')   # workers register with this IP;
+                                                   # loopback backends 500 on kv-followed requests
 # BEFORE — upstream merge-base (unpatched):
 export ROUTER_REF=58a0935955d5b29f615c784a3533ff2433075bdd
 docker compose build && docker compose up -d
@@ -14,7 +16,8 @@ docker compose build && docker compose up -d
 #   curl -s localhost:8100/v1/models && curl -s localhost:8200/v1/models
 # and for BOTH workers to register with the controller:
 #   docker logs router 2>&1 | grep -c "Registered instance"   # want: 2
-pip install httpx && python3 probe.py
+python3 -m venv .venv && .venv/bin/pip install httpx   # bare pip/ensurepip may be absent (PEP 668 / minimal images)
+.venv/bin/python probe.py
 # expect: chat requests ALTERNATE engines (same prefix prefilled on both),
 #         no "found by kvaware router" lines for chat in `docker logs router`;
 #         prompt-form pair DOES kv-follow.
@@ -30,7 +33,7 @@ docker compose build router && docker compose up -d router
 # the recreated router's worker registry starts EMPTY - wait for both
 # workers to re-register (heartbeat interval 10s):
 #   docker logs router 2>&1 | grep -c "Registered instance"   # want: 2
-python3 probe.py   # fresh salt is generated per run
+.venv/bin/python probe.py   # fresh salt is generated per run
 # expect: chat reqs 2-4 pin to the engine that served req 1 (wall_s drops),
 #         "found by kvaware router" in `docker logs router`;
 #         prompt-form behavior unchanged.

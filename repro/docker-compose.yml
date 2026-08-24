@@ -79,7 +79,11 @@ services:
     entrypoint: ["vllm-router"]
     command: ["--host", "0.0.0.0", "--port", "30800",
               "--service-discovery", "static",
-              "--static-backends", "http://127.0.0.1:8100,http://127.0.0.1:8200",
+              # HOST_IP (the machine's primary IP, e.g. $(hostname -I | awk "{print \$1}")):
+              # backend URLs must match the IP the LMCache workers REGISTER with
+              # (get_ip() on host networking = primary IP). Loopback backends make
+              # the router's instance->ip mapping fail and kv-followed requests 500.
+              "--static-backends", "http://${HOST_IP:?export HOST_IP first}:8100,http://${HOST_IP}:8200",
               "--static-models", "Qwen/Qwen2.5-1.5B-Instruct,Qwen/Qwen2.5-1.5B-Instruct",
               "--static-model-types", "chat,chat",
               "--routing-logic", "kvaware",
