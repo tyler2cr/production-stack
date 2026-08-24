@@ -1,23 +1,28 @@
 # Self-contained repro for the kvaware chat-tokenization patch.
-# One machine, any 2 CUDA GPUs (or one GPU: drop engine1 to a shared card by
-# setting both NVIDIA_VISIBLE_DEVICES=0 and GPU_MEM=0.4). Small ungated model
-# so the signature reproduces in minutes. All services on host networking -
-# the LMCache controller advertises get_ip(), and the kvaware hash chain must
-# be identical on router and engines (same image, same PYTHONHASHSEED).
+# One machine, any 2 CUDA GPUs (or one GPU: GPU1=0 GPU_MEM=0.3 puts both
+# engines on device 0). Small ungated model so the signature reproduces in
+# minutes.
 #
-#   export ROUTER_REF=<sha>   # required by EVERY compose command (the file
-#   docker compose build      # interpolates it), including `rm`/`ps`.
-#   docker compose up -d
+# Topology: one compose bridge network with PINNED container IPs. Every
+# component needs a distinct, mutually-routable IP because upstream's
+# kvaware instance mapping (QueryInstMsg) keys engines by IP ALONE - two
+# engines sharing an IP (e.g. host networking on one box) are
+# indistinguishable and kv-followed requests to the unmapped one 500.
+# Distinct bridge IPs also satisfy worker registration (get_ip() in the
+# container = its bridge IP) and the controller's advertised heartbeat URL.
+#
+#   export ROUTER_REF=<sha>   # required by EVERY compose command (build/up/rm)
+#   docker compose build && docker compose up -d
 #
 # ROUTER_REF selects the router build: the PR head (patched) or its
 # merge-base (unpatched baseline) - exact shas in README.md.
-# Single-GPU rig: GPU1=0 GPU_MEM=0.4 puts both engines on device 0.
-# Only engine0 carries the build key: two services building the same
-# target+tag race in parallel and the second image export fails with
-# "already exists". engine1 reuses the image engine0 built.
+networks:
+  kvnet:
+    ipam:
+      config:
+        - subnet: 172.28.0.0/24
 x-engine: &engine
   image: local/kvaware-repro:base
-  network_mode: host
   shm_size: 8gb
   volumes: ["./hf-cache:/root/.cache/huggingface"]
 services:
@@ -25,24 +30,25 @@ services:
     <<: *engine
     build: {context: ., dockerfile: Dockerfile, target: base}
     container_name: engine0
+    networks: {kvnet: {ipv4_address: 172.28.0.10}}
+    ports: ["8100:8000"]   # host-side metrics/debug; in-network traffic uses 172.28.0.10:8000
     environment: &engine-env
       NVIDIA_VISIBLE_DEVICES: "0"
       PYTHONHASHSEED: "0"
       LMCACHE_USE_EXPERIMENTAL: "True"
       LMCACHE_ENABLE_CONTROLLER: "True"
       LMCACHE_LMCACHE_INSTANCE_ID: "engine0"
-      LMCACHE_CONTROLLER_PULL_URL: "127.0.0.1:9000"
-      LMCACHE_CONTROLLER_REPLY_URL: "127.0.0.1:9001"
+      LMCACHE_CONTROLLER_PULL_URL: "172.28.0.12:9000"
+      LMCACHE_CONTROLLER_REPLY_URL: "172.28.0.12:9001"
       LMCACHE_LMCACHE_WORKER_PORTS: "8001"
       # 0.4.x workers default to NEVER heartbeating while the controller
-      # reaps silent workers after 30s - this must be set or every worker
-      # deregisters ~30s after registering.
+      # reaps silent workers after 30s - must be set.
       LMCACHE_LMCACHE_WORKER_HEARTBEAT_TIME: "10"
       LMCACHE_LOCAL_CPU: "True"
       LMCACHE_MAX_LOCAL_CPU_SIZE: "10"
       VLLM_RPC_TIMEOUT: "1000000"
     entrypoint: ["vllm", "serve"]
-    command: ["Qwen/Qwen2.5-1.5B-Instruct", "--port", "8100",
+    command: ["Qwen/Qwen2.5-1.5B-Instruct", "--port", "8000",
               "--max-model-len", "16384", "--enable-prefix-caching",
               "--gpu-memory-utilization", "${GPU_MEM:-0.85}",
               "--kv-transfer-config",
@@ -51,13 +57,14 @@ services:
   engine1:
     <<: *engine
     container_name: engine1
+    networks: {kvnet: {ipv4_address: 172.28.0.11}}
+    ports: ["8200:8000"]
     environment:
       <<: *engine-env
       NVIDIA_VISIBLE_DEVICES: "${GPU1:-1}"
       LMCACHE_LMCACHE_INSTANCE_ID: "engine1"
-      LMCACHE_LMCACHE_WORKER_PORTS: "8002"
     entrypoint: ["vllm", "serve"]
-    command: ["Qwen/Qwen2.5-1.5B-Instruct", "--port", "8200",
+    command: ["Qwen/Qwen2.5-1.5B-Instruct", "--port", "8000",
               "--max-model-len", "16384", "--enable-prefix-caching",
               "--gpu-memory-utilization", "${GPU_MEM:-0.85}",
               "--kv-transfer-config",
@@ -73,17 +80,14 @@ services:
       args: {ROUTER_REF: "${ROUTER_REF:?set ROUTER_REF to the PR branch or its merge-base sha}"}
       target: router
     container_name: router
-    network_mode: host
+    networks: {kvnet: {ipv4_address: 172.28.0.12}}
+    ports: ["30800:30800"]
     environment: {PYTHONHASHSEED: "0"}
     depends_on: [engine0, engine1]
     entrypoint: ["vllm-router"]
     command: ["--host", "0.0.0.0", "--port", "30800",
               "--service-discovery", "static",
-              # HOST_IP (the machine's primary IP, e.g. $(hostname -I | awk "{print \$1}")):
-              # backend URLs must match the IP the LMCache workers REGISTER with
-              # (get_ip() on host networking = primary IP). Loopback backends make
-              # the router's instance->ip mapping fail and kv-followed requests 500.
-              "--static-backends", "http://${HOST_IP:?export HOST_IP first}:8100,http://${HOST_IP}:8200",
+              "--static-backends", "http://172.28.0.10:8000,http://172.28.0.11:8000",
               "--static-models", "Qwen/Qwen2.5-1.5B-Instruct,Qwen/Qwen2.5-1.5B-Instruct",
               "--static-model-types", "chat,chat",
               "--routing-logic", "kvaware",

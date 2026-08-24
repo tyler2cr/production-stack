@@ -7,8 +7,6 @@ ungated; total setup is minutes. `ROUTER_REF` must be exported for EVERY
 `rm`).
 
 ```bash
-export HOST_IP=$(hostname -I | awk '{print $1}')   # workers register with this IP;
-                                                   # loopback backends 500 on kv-followed requests
 # BEFORE — upstream merge-base (unpatched):
 export ROUTER_REF=58a0935955d5b29f615c784a3533ff2433075bdd
 docker compose build && docker compose up -d
