@@ -22,8 +22,9 @@ pip install httpx && python3 probe.py
 # AFTER — the PR head (immutable sha; equals branch router-kvaware-chat-completions).
 # The hardware e2e in the results doc ran at 3f498ff; the commits after it
 # are review-hardening only (executors for blocking I/O, graceful fallback
-# on tokenize failure, single-flight tokenizer init, normalization tidying).
-export ROUTER_REF=113973c
+# on tokenize failure, single-flight tokenizer init, normalization tidying,
+# shared _ensure_tokenizer helper).
+export ROUTER_REF=a7fd571
 docker compose rm -sf router
 docker compose build router && docker compose up -d router
 # the recreated router's worker registry starts EMPTY - wait for both
