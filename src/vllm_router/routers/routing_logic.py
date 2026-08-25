@@ -167,7 +167,14 @@ async def _ensure_tokenizer(router, endpoints: List[EndpointInfo]):
     doomed hub lookup before reaching the remote ``/tokenize`` fallback.
     """
     if router.tokenizer is None:
-        model_name = endpoints[0].model_names[0]
+        # Operator override first: engines that serve under an alias
+        # (--served-model-name) advertise a name that is not a resolvable
+        # tokenizer id, which forces the remote /tokenize round trip on every
+        # request. --tokenizer supplies the real id (or a local path) so the
+        # router can tokenize in-process.
+        model_name = (
+            getattr(router, "tokenizer_name", None) or endpoints[0].model_names[0]
+        )
         if model_name in getattr(router, "_tokenizer_load_failures", ()):
             raise ValueError(
                 f"tokenizer load for '{model_name}' already failed; "
@@ -413,7 +420,11 @@ class KvawareRouter(RoutingInterface):
         lmcache_worker_timeout: int = 30,
         lmcache_controller_reply_port: Optional[int] = None,
         lmcache_controller_heartbeat_port: Optional[int] = None,
+        tokenizer: Optional[str] = None,
     ):
+        #: Optional tokenizer id/path the router loads INSTEAD of the served
+        #: model name - must be the tokenizer the engines actually run.
+        self.tokenizer_name = tokenizer
         self.lmcache_controller_port = lmcache_controller_port
         self.lmcache_controller_reply_port = lmcache_controller_reply_port
         self.lmcache_controller_heartbeat_port = lmcache_controller_heartbeat_port
@@ -619,6 +630,7 @@ class LoadAwareRouter(KvawareRouter):
         lmcache_controller_reply_port: Optional[int] = None,
         lmcache_controller_heartbeat_port: Optional[int] = None,
         loadaware_beta: Optional[float] = None,
+        tokenizer: Optional[str] = None,
     ):
         super().__init__(
             lmcache_controller_port,
@@ -628,6 +640,7 @@ class LoadAwareRouter(KvawareRouter):
             lmcache_worker_timeout=lmcache_worker_timeout,
             lmcache_controller_reply_port=lmcache_controller_reply_port,
             lmcache_controller_heartbeat_port=lmcache_controller_heartbeat_port,
+            tokenizer=tokenizer,
         )
         #: Weight on the load penalty, in units of "full cache hits per 100%
         #: above fleet-average load".
@@ -1262,6 +1275,7 @@ def initialize_routing_logic(
             lmcache_controller_heartbeat_port=kwargs.get(
                 "lmcache_controller_heartbeat_port"
             ),
+            tokenizer=kwargs.get("tokenizer"),
         )
         router.start_kv_manager()
     elif routing_logic == RoutingLogic.LOADAWARE:
@@ -1277,6 +1291,7 @@ def initialize_routing_logic(
                 "lmcache_controller_heartbeat_port"
             ),
             loadaware_beta=kwargs.get("loadaware_beta"),
+            tokenizer=kwargs.get("tokenizer"),
         )
         router.start_kv_manager()
     elif routing_logic == RoutingLogic.PREFIXAWARE:
