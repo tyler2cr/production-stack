@@ -450,6 +450,20 @@ def parse_args():
     )
 
     parser.add_argument(
+        "--tokenizer",
+        type=str,
+        default=None,
+        help="Tokenizer id or local path the router loads for kv-aware/"
+        "load-aware token-id computation, INSTEAD of the model name the "
+        "engines advertise. Set this when engines serve under an alias "
+        "(vLLM --served-model-name) that is not a resolvable tokenizer id - "
+        "otherwise the router cannot tokenize locally and pays a remote "
+        "/tokenize round trip per routing decision. MUST be the same "
+        "tokenizer the engines run, or router-side token ids drift from "
+        "engine-side KV hashes and kv-aware routing silently degrades.",
+    )
+
+    parser.add_argument(
         "--loadaware-beta",
         type=float,
         default=None,

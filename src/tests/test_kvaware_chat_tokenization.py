@@ -385,3 +385,51 @@ async def test_cold_tokenizer_load_receives_the_model_name(monkeypatch):
     ids2 = await router.tokenize_prompt(endpoints(URL_A), {"messages": MESSAGES})
     assert ids2 == CHAT_IDS
     assert loaded == [MODEL]  # cached - no second load
+
+
+# --- the --tokenizer operator override -----------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_tokenizer_override_is_loaded_instead_of_the_served_name(monkeypatch):
+    """Engines serving under an alias advertise a name that can never load;
+    --tokenizer supplies the real id, and the endpoint list must not even be
+    consulted for a name (the stub here has no model_names)."""
+    router = LoadAwareRouter.__new__(LoadAwareRouter)
+    router.tokenizer = None
+    router.tokenizer_name = "org/real-tokenizer-repo"
+    loaded = []
+
+    class FakeAuto:
+        @staticmethod
+        def from_pretrained(name):
+            loaded.append(name)
+            return ChatTokenizer()
+
+    monkeypatch.setattr(routing_logic, "AutoTokenizer", FakeAuto, raising=False)
+
+    class NamelessEndpoint:
+        url = URL_A  # deliberately NO model_names attribute
+
+    ids = await router.tokenize_prompt([NamelessEndpoint()], {"messages": MESSAGES})
+    assert ids == CHAT_IDS
+    assert loaded == ["org/real-tokenizer-repo"]
+
+
+@pytest.mark.asyncio
+async def test_without_override_the_served_name_is_used(monkeypatch):
+    router = LoadAwareRouter.__new__(LoadAwareRouter)
+    router.tokenizer = None
+    router.tokenizer_name = None
+    loaded = []
+
+    class FakeAuto:
+        @staticmethod
+        def from_pretrained(name):
+            loaded.append(name)
+            return ChatTokenizer()
+
+    monkeypatch.setattr(routing_logic, "AutoTokenizer", FakeAuto, raising=False)
+    ids = await router.tokenize_prompt(endpoints(URL_A), {"messages": MESSAGES})
+    assert ids == CHAT_IDS
+    assert loaded == [MODEL]
